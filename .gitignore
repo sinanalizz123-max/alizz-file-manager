@@ -1,0 +1,15 @@
+# Gradle
+.gradle/
+build/
+local.properties
+# Android Studio
+.idea/
+*.iml
+# Signing
+*.jks
+*.keystore
+# OS
+.DS_Store
+# APK outputs (delivered via GitHub Releases, not git)
+/app/build/
+releases/

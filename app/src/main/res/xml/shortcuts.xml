@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="open_files"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_agenda"
+        android:shortcutShortLabel="@string/shortcut_files"
+        android:shortcutLongLabel="@string/shortcut_files">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.alizz.filemanager"
+            android:targetClass="com.alizz.filemanager.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="open_recycle"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_delete"
+        android:shortcutShortLabel="@string/shortcut_recycle"
+        android:shortcutLongLabel="@string/shortcut_recycle">
+        <intent
+            android:action="com.alizz.filemanager.OPEN_RECYCLE"
+            android:targetPackage="com.alizz.filemanager"
+            android:targetClass="com.alizz.filemanager.MainActivity" />
+    </shortcut>
+</shortcuts>
