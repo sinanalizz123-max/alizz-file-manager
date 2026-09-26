@@ -392,19 +392,8 @@ private fun FileManagerScaffold(
         }
     }
 
-    /** Open a dir, jumping across folders for global-search results. */
-    fun openBrowserItem(item: FileItem) {
-        if (vm.selectionActive) {
-            vm.toggleSelect(item.file.absolutePath)
-        } else if (item.file.isDirectory) {
-            val sameParent = item.file.parentFile?.absolutePath == vm.currentDir?.absolutePath
-            if (sameParent) vm.openDir(item.file) else vm.openPath(item.file)
-        } else {
-            openFileEntry(item.file)
-        }
-    }
-
-    fun openFileEntry(f: File) {        viewerReadOnly = false
+    fun openFileEntry(f: File) {
+        viewerReadOnly = false
         when (kindOf(f)) {
             ViewerKind.IMAGE, ViewerKind.VIDEO, ViewerKind.AUDIO, ViewerKind.TEXT,
             ViewerKind.APK, ViewerKind.ARCHIVE, ViewerKind.PDF -> viewerTarget = f
@@ -417,6 +406,18 @@ private fun FileManagerScaffold(
                 }
                 if (!opened) infoTarget = f
             }
+        }
+    }
+
+    /** Open a dir, jumping across folders for global-search results. */
+    fun openBrowserItem(item: FileItem) {
+        if (vm.selectionActive) {
+            vm.toggleSelect(item.file.absolutePath)
+        } else if (item.file.isDirectory) {
+            val sameParent = item.file.parentFile?.absolutePath == vm.currentDir?.absolutePath
+            if (sameParent) vm.openDir(item.file) else vm.openPath(item.file)
+        } else {
+            openFileEntry(item.file)
         }
     }
 
