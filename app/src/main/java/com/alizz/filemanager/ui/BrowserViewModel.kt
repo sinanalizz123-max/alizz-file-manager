@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import com.alizz.filemanager.archive.createZip
 import com.alizz.filemanager.data.HistoryStore
@@ -171,7 +172,7 @@ class BrowserViewModel : ViewModel() {
                 null
             } ?: return
             for (k in kids) {
-                ensureActive()
+                currentCoroutineContext().ensureActive()
                 if (k.name == TRASH_DIR_NAME) continue
                 if (!showHidden && k.name.startsWith(".")) continue
                 if (k.name.contains(q, ignoreCase = true)) {
