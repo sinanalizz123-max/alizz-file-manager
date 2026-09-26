@@ -158,11 +158,12 @@ class BrowserViewModel : ViewModel() {
         }
     }
 
-    private suspend fun globalSearch(): List<FileItem> {        val q = queryState
+    private suspend fun globalSearch(): List<FileItem> {
+        val q = queryState
         val base = path.firstOrNull() ?: return emptyList()
         searchCapped = false
         val out = ArrayList<FileItem>(64)
-        fun walk(dir: File) {
+        suspend fun walk(dir: File) {
             if (out.size >= GLOBAL_SEARCH_MAX) return
             val kids = try {
                 dir.listFiles()
