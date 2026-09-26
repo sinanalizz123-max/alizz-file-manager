@@ -93,7 +93,10 @@ fun PlayerScreen(
     val player = remember(file) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(file.toURI().toString()))
-            addListener(object : Player.Listener {
+            playWhenReady = true
+            prepare()
+        }.also { exo ->
+            exo.addListener(object : Player.Listener {
                 override fun onPlayerError(e: PlaybackException) {
                     error = e.message ?: "Playback failed"
                 }
@@ -104,13 +107,11 @@ fun PlayerScreen(
 
                 override fun onPlaybackStateChanged(state: Int) {
                     if (state == Player.STATE_READY) {
-                        val d = player.duration
+                        val d = exo.duration
                         if (d > 0) duration = d
                     }
                 }
             })
-            playWhenReady = true
-            prepare()
         }
     }
     DisposableEffect(file) {
