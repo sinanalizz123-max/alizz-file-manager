@@ -3,10 +3,15 @@ package com.alizz.filemanager.viewer
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,6 +47,7 @@ fun PdfScreen(
     var pageCount by remember(file) { mutableStateOf(-1) }
     var locked by remember(file) { mutableStateOf(false) }
     var loadError by remember(file) { mutableStateOf<String?>(null) }
+    var aspect by remember(file) { mutableStateOf(0.7f) }
 
     val renderer = remember(file) {
         try {
@@ -78,17 +84,20 @@ fun PdfScreen(
     }
     LaunchedEffect(renderer) {
         pageCount = try {
-            renderer?.pageCount ?: -1
+            val count = renderer?.pageCount ?: -1
+            if (count > 0) {
+                renderer?.openPage(0)?.use { first ->
+                    if (first.height > 0) aspect = first.width.toFloat() / first.height.toFloat()
+                }
+            }
+            count
         } catch (e: Exception) {
             loadError = e.message ?: "Cannot open PDF"
             -1
         }
     }
 
-    val pager = androidx.compose.foundation.pager.rememberPagerState(
-        initialPage = 0,
-        pageCount = { pageCount.coerceAtLeast(0) },
-    )
+    val listState = rememberLazyListState()
 
     Scaffold(
         topBar = {
@@ -102,7 +111,7 @@ fun PdfScreen(
                 actions = {
                     if (pageCount > 0) {
                         Text(
-                            "${pager.currentPage + 1} / $pageCount",
+                            "${listState.firstVisibleItemIndex + 1} / $pageCount",
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(end = 12.dp),
                         )
@@ -122,7 +131,7 @@ fun PdfScreen(
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(24.dp),
             )
-            pageCount < 0 -> Text(
+            pageCount < 0 || renderer == null -> Text(
                 "Loading…",
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.padding(24.dp),
@@ -132,47 +141,78 @@ fun PdfScreen(
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.padding(24.dp),
             )
-            renderer != null -> PdfPager(
-                renderer = renderer,
-                pager = pager,
-                modifier = Modifier.padding(padding),
-            )
+            else -> LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(padding),
+            ) {
+                items(count = pageCount, key = { "page-$it" }) { index ->
+                    PdfPage(
+                        renderer = renderer,
+                        index = index,
+                        aspect = aspect,
+                    )
+                }
+            }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PdfPager(
+private fun PdfPage(
     renderer: PdfRenderer,
-    pager: androidx.compose.foundation.pager.PagerState,
-    modifier: Modifier = Modifier,
+    index: Int,
+    aspect: Float,
 ) {
-    var scale by remember { mutableStateOf(1f) }
-    var offsetX by remember { mutableStateOf(0f) }
-    var offsetY by remember { mutableStateOf(0f) }
+    var bitmap by remember(index) { mutableStateOf<Bitmap?>(null) }
+    var scale by remember(index) { mutableStateOf(1f) }
+    var offsetX by remember(index) { mutableStateOf(0f) }
+    var offsetY by remember(index) { mutableStateOf(0f) }
+    val zoomed = scale > 1f
 
-    HorizontalPager(state = pager, modifier = modifier.fillMaxSize()) { page ->
-        var bitmap by remember(page) { mutableStateOf<Bitmap?>(null) }
-        LaunchedEffect(page) {
-            scale = 1f
-            offsetX = 0f
-            offsetY = 0f
-            bitmap = renderPage(renderer, page)
+    LaunchedEffect(index) {
+        bitmap = renderPage(renderer, index)
+    }
+    DisposableEffect(index) {
+        onDispose {
+            try {
+                bitmap?.recycle()
+            } catch (e: Exception) {
+            }
+            bitmap = null
         }
-        val bmp = bitmap
-        if (bmp != null) {
-            AsyncImage(
-                model = bmp,
-                contentDescription = "Page ${page + 1}",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = scale.coerceIn(1f, 4f),
-                        scaleY = scale.coerceIn(1f, 4f),
-                        translationX = offsetX,
-                        translationY = offsetY,
-                    )
-                    .pointerInput(page) {
+    }
+
+    val bmp = bitmap
+    if (bmp != null) {
+        AsyncImage(
+            model = bmp,
+            contentDescription = "Page ${index + 1}",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxWidth()
+                .aspectRatio(aspect.coerceIn(0.2f, 3f))
+                .graphicsLayer(
+                    scaleX = scale,
+                    scaleY = scale,
+                    translationX = offsetX,
+                    translationY = offsetY,
+                )
+                .combinedClickable(
+                    onDoubleClick = {
+                        if (zoomed) {
+                            scale = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+                        } else {
+                            scale = 2.5f
+                        }
+                    },
+                    onClick = {},
+                )
+                .pointerInput(zoomed) {
+                    // Pinch/pan gestures are only consumed while zoomed,
+                    // so single-finger scroll always reaches the page list.
+                    if (zoomed) {
                         detectTransformGestures { _, pan, zoom, _ ->
                             val next = (scale * zoom).coerceIn(1f, 4f)
                             scale = next
@@ -184,25 +224,24 @@ private fun PdfPager(
                                 offsetY += pan.y
                             }
                         }
-                    },
-            )
-        } else {
-            androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
-                Text(
-                    "Rendering page ${page + 1}…",
-                    color = MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.padding(24.dp),
-                )
-            }
-        }
+                    }
+                },
+        )
+    } else {
+        Text(
+            "Rendering page ${index + 1}…",
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(24.dp),
+        )
     }
 }
 
 private fun renderPage(renderer: PdfRenderer, index: Int): Bitmap? {
     return try {
         renderer.openPage(index).use { page ->
-            val w = (page.width * 2).coerceAtMost(4096)
-            val h = (page.height * 2).coerceAtMost(4096)
+            val scaleFactor = 1.5f
+            val w = (page.width * scaleFactor).toInt().coerceAtMost(2048).coerceAtLeast(1)
+            val h = (page.height * scaleFactor).toInt().coerceAtMost(2048).coerceAtLeast(1)
             val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             bmp

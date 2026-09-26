@@ -322,6 +322,16 @@ private fun FileManagerScaffold(
     BackHandler(enabled = showServer) { showServer = false }
     BackHandler(enabled = showShizuku) { showShizuku = false }
     BackHandler(enabled = viewerTarget != null) { viewerTarget = null; viewerReadOnly = false; vm.clearChecksums() }
+    BackHandler(
+        enabled = viewerTarget == null && !showRecycle && !showSaf && !showFtp && !showSftp &&
+            !showSmb && !showWebdav && !showDrive && !showDropbox && !showOneDrive &&
+            cloudProvider == null && !showServer && !showShizuku &&
+            (vm.selectionActive || vm.path.isNotEmpty()),
+    ) {
+        // Phone back navigates: clear selection, then up, then home. At home root the press falls through and exits.
+        if (vm.selectionActive) vm.clearSelection()
+        else if (vm.path.isNotEmpty() && !vm.goUp()) vm.goHome()
+    }
 
     val treeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
@@ -392,7 +402,9 @@ private fun FileManagerScaffold(
     Scaffold(
         snackbarHost = { SnackbarHost(snack) },
         topBar = {
-            if (cloudProvider != null) {
+            if (viewerTarget != null) {
+                // Viewers provide their own bar and actions — no file-manager chrome.
+            } else if (cloudProvider != null) {
                 // GenericCloudScreen provides its own bar.
             } else if (showDropbox || showOneDrive) {
                 // Cloud screens provide their own bars.
