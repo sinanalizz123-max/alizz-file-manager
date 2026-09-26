@@ -13,14 +13,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -29,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -38,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PdfScreen(
     file: File,
@@ -101,13 +98,9 @@ fun PdfScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
+            ViewerTopBar(
+                title = file.name,
+                onBack = onBack,
                 actions = {
                     if (pageCount > 0) {
                         Text(
@@ -151,6 +144,12 @@ fun PdfScreen(
                         index = index,
                         aspect = aspect,
                     )
+                    if (index < pageCount - 1) {
+                        HorizontalDivider(
+                            thickness = 8.dp,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -185,48 +184,53 @@ private fun PdfPage(
 
     val bmp = bitmap
     if (bmp != null) {
-        AsyncImage(
-            model = bmp,
-            contentDescription = "Page ${index + 1}",
-            contentScale = ContentScale.Fit,
+        Surface(
+            color = Color.White,
             modifier = Modifier.fillMaxWidth()
-                .aspectRatio(aspect.coerceIn(0.2f, 3f))
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
-                    translationX = offsetX,
-                    translationY = offsetY,
-                )
-                .combinedClickable(
-                    onDoubleClick = {
-                        if (zoomed) {
-                            scale = 1f
-                            offsetX = 0f
-                            offsetY = 0f
-                        } else {
-                            scale = 2.5f
-                        }
-                    },
-                    onClick = {},
-                )
-                .pointerInput(zoomed) {
-                    // Pinch/pan gestures are only consumed while zoomed,
-                    // so single-finger scroll always reaches the page list.
-                    if (zoomed) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            val next = (scale * zoom).coerceIn(1f, 4f)
-                            scale = next
-                            if (next <= 1f) {
+                .aspectRatio(aspect.coerceIn(0.2f, 3f)),
+        ) {
+            AsyncImage(
+                model = bmp,
+                contentDescription = "Page ${index + 1}",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offsetX,
+                        translationY = offsetY,
+                    )
+                    .combinedClickable(
+                        onDoubleClick = {
+                            if (zoomed) {
+                                scale = 1f
                                 offsetX = 0f
                                 offsetY = 0f
                             } else {
-                                offsetX += pan.x
-                                offsetY += pan.y
+                                scale = 2.5f
+                            }
+                        },
+                        onClick = {},
+                    )
+                    .pointerInput(zoomed) {
+                        // Pinch/pan gestures are only consumed while zoomed,
+                        // so single-finger scroll always reaches the page list.
+                        if (zoomed) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                val next = (scale * zoom).coerceIn(1f, 4f)
+                                scale = next
+                                if (next <= 1f) {
+                                    offsetX = 0f
+                                    offsetY = 0f
+                                } else {
+                                    offsetX += pan.x
+                                    offsetY += pan.y
+                                }
                             }
                         }
-                    }
-                },
-        )
+                    },
+            )
+        }
     } else {
         Text(
             "Rendering page ${index + 1}…",
@@ -243,6 +247,8 @@ private fun renderPage(renderer: PdfRenderer, index: Int): Bitmap? {
             val w = (page.width * scaleFactor).toInt().coerceAtMost(2048).coerceAtLeast(1)
             val h = (page.height * scaleFactor).toInt().coerceAtMost(2048).coerceAtLeast(1)
             val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            // White base so transparent PDFs look normal in dark mode too.
+            bmp.eraseColor(android.graphics.Color.WHITE)
             page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             bmp
         }
