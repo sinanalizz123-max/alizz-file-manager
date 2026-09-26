@@ -23,6 +23,7 @@ import java.util.Locale
 
 data class FileItem(val file: File, val name: String = file.name, val isDir: Boolean = file.isDirectory, val size: Long = if (file.isDirectory) 0 else file.length(), val modified: Long = file.lastModified())
 enum class BrowserView { LIST, GRID }
+enum class SearchScope { FOLDER, PHONE }
 enum class SortMode { NAME_AZ, NAME_ZA, NEWEST, OLDEST, LARGEST, SMALLEST }
 enum class ClipboardMode { COPY, MOVE }
 enum class OperationKind { COPY, MOVE, DELETE, RENAME, CREATE, COMPRESS }
@@ -34,7 +35,10 @@ class BrowserViewModel : ViewModel() {
     var path by mutableStateOf<List<File>>(emptyList()); private set
     var items by mutableStateOf<List<FileItem>>(emptyList()); private set
     var selected by mutableStateOf<Set<String>>(emptySet()); private set
-    var view by mutableStateOf(BrowserView.LIST)
+    var view by mutableStateOf(BrowserView.GRID)
+    var searchScope by mutableStateOf(SearchScope.FOLDER)
+    var searchCapped by mutableStateOf(false)
+        private set
     private var queryState by mutableStateOf("")
     val query: String get() = queryState
     var showHidden by mutableStateOf(false)
@@ -140,12 +144,46 @@ class BrowserViewModel : ViewModel() {
         listJob = viewModelScope.launch {
             busy = true
             val result = withContext(Dispatchers.IO) {
-                if (!d.isDirectory) emptyList()
-                else d.listFiles()?.asSequence()?.filter { it.name != TRASH_DIR_NAME && (showHidden || !it.isHidden) }?.map(::FileItem)?.filter { queryState.isBlank() || it.name.contains(queryState, true) }?.toList() ?: emptyList()
+                if (!d.isDirectory) {
+                    emptyList()
+                } else if (queryState.isNotBlank() && searchScope == SearchScope.PHONE) {
+                    globalSearch()
+                } else {
+                    d.listFiles()?.asSequence()?.filter { it.name != TRASH_DIR_NAME && (showHidden || !it.isHidden) }?.map(::FileItem)?.filter { queryState.isBlank() || it.name.contains(queryState, true) }?.toList() ?: emptyList()
+                }
             }
             if (currentDir?.absolutePath == requestedPath) items = sortItems(result)
             busy = false
         }
+    }
+
+    private suspend fun globalSearch(): List<FileItem> {        val q = queryState
+        val base = path.firstOrNull() ?: return emptyList()
+        searchCapped = false
+        val out = ArrayList<FileItem>(64)
+        fun walk(dir: File) {
+            if (out.size >= GLOBAL_SEARCH_MAX) return
+            val kids = try {
+                dir.listFiles()
+            } catch (e: Exception) {
+                null
+            } ?: return
+            for (k in kids) {
+                kotlinx.coroutines.ensureActive()
+                if (k.name == TRASH_DIR_NAME) continue
+                if (!showHidden && k.name.startsWith(".")) continue
+                if (k.name.contains(q, ignoreCase = true)) {
+                    out += FileItem(k)
+                    if (out.size >= GLOBAL_SEARCH_MAX) {
+                        searchCapped = true
+                        return
+                    }
+                }
+                if (k.isDirectory && k.canRead()) walk(k)
+            }
+        }
+        walk(base)
+        return out
     }
 
     private fun sortItems(s: List<FileItem>) = when (sort) {
@@ -417,6 +455,7 @@ class BrowserViewModel : ViewModel() {
     }
 
     companion object {
+        const val GLOBAL_SEARCH_MAX = 500
         fun formatSize(b: Long): String {
             if (b < 1024) return b.toString() + " B"
             var x = b / 1024.0; val u = arrayOf("KB", "MB", "GB", "TB"); var i = 0

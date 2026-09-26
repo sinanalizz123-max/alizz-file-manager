@@ -90,6 +90,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -105,6 +106,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.alizz.filemanager.data.HistoryEntry
 import com.alizz.filemanager.data.HistoryStore
@@ -114,6 +118,7 @@ import com.alizz.filemanager.ui.BrowserViewModel.RenamePreview
 import com.alizz.filemanager.ui.FileItem
 import com.alizz.filemanager.ui.RecycleStore
 import com.alizz.filemanager.ui.RecycleViewModel
+import com.alizz.filemanager.ui.SearchScope
 import com.alizz.filemanager.ui.SortMode
 import com.alizz.filemanager.archive.ArchiveScreen
 import com.alizz.filemanager.providers.cloud.BoxProvider
@@ -223,6 +228,8 @@ private fun FileManagerScaffold(
     var cloudProvider by remember { mutableStateOf<CloudProvider?>(null) }
     var showServer by remember { mutableStateOf(false) }
     var showShizuku by remember { mutableStateOf(false) }
+    var showPermPopup by remember { mutableStateOf(!hasStoragePermission(context)) }
+    var autoOpened by remember { mutableStateOf(false) }
     var viewerTarget by remember { mutableStateOf<File?>(null) }
     var viewerReadOnly by remember { mutableStateOf(false) }
     val recycleStore = remember(context) { RecycleStore(context) }
@@ -333,6 +340,46 @@ private fun FileManagerScaffold(
         else if (vm.path.isNotEmpty() && !vm.goUp()) vm.goHome()
     }
 
+    val legacyPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            showPermPopup = false
+            vm.loadRoots(context)
+            safRoots = safStore.roots()
+        }
+    }
+
+    fun requestStorageAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            onRequestStorageAccess()
+        } else {
+            legacyPermLauncher.launch(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    fun refreshLocalRoots() {
+        vm.loadRoots(context)
+        safRoots = safStore.roots()
+        recycleVm.load(recycleStore)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshLocalRoots()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(vm.roots) {
+        // Jump straight into storage once permission lands and exactly one root exists.
+        if (!autoOpened && vm.path.isEmpty() && vm.roots.size == 1) {
+            autoOpened = true
+            vm.openRoot(vm.roots.first())
+        }
+        if (vm.roots.size != 1) autoOpened = true
+    }
+
     val treeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             val label = uri.lastPathSegment?.substringAfter(':')?.ifEmpty { null } ?: "External storage"
@@ -345,8 +392,19 @@ private fun FileManagerScaffold(
         }
     }
 
-    fun openFileEntry(f: File) {
-        viewerReadOnly = false
+    /** Open a dir, jumping across folders for global-search results. */
+    fun openBrowserItem(item: FileItem) {
+        if (vm.selectionActive) {
+            vm.toggleSelect(item.file.absolutePath)
+        } else if (item.file.isDirectory) {
+            val sameParent = item.file.parentFile?.absolutePath == vm.currentDir?.absolutePath
+            if (sameParent) vm.openDir(item.file) else vm.openPath(item.file)
+        } else {
+            openFileEntry(item.file)
+        }
+    }
+
+    fun openFileEntry(f: File) {        viewerReadOnly = false
         when (kindOf(f)) {
             ViewerKind.IMAGE, ViewerKind.VIDEO, ViewerKind.AUDIO, ViewerKind.TEXT,
             ViewerKind.APK, ViewerKind.ARCHIVE, ViewerKind.PDF -> viewerTarget = f
@@ -731,7 +789,7 @@ private fun FileManagerScaffold(
                 OutlinedTextField(
                     value = vm.query,
                     onValueChange = vm::setQuery,
-                    label = { Text("Search in folder") },
+                    label = { Text(if (vm.searchScope == SearchScope.PHONE) "Search all files on phone" else "Search in folder") },
                     trailingIcon = {
                         if (vm.query.isNotEmpty()) {
                             IconButton(onClick = { vm.setQuery("") }) {
@@ -742,12 +800,35 @@ private fun FileManagerScaffold(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                     singleLine = true,
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = vm.searchScope == SearchScope.FOLDER,
+                        onClick = { vm.searchScope = SearchScope.FOLDER; vm.refresh() },
+                        label = { Text("This folder") },
+                    )
+                    FilterChip(
+                        selected = vm.searchScope == SearchScope.PHONE,
+                        onClick = { vm.searchScope = SearchScope.PHONE; vm.refresh() },
+                        label = { Text("All files") },
+                    )
+                    if (vm.searchCapped) {
+                        Text(
+                            "Top 500",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                }
             }
             if (vm.path.isEmpty()) {
                 HomeContent(
                     roots = vm.roots,
                     hasPermission = hasStoragePermission(context),
-                    onGrant = onRequestStorageAccess,
+                    onGrant = { requestStorageAccess() },
                     onOpenRoot = { vm.openRoot(it) },
                     recycleCount = recycleVm.items.size,
                     onOpenRecycle = { recycleVm.load(recycleStore); showRecycle = true },
@@ -846,11 +927,7 @@ private fun FileManagerScaffold(
                                 item = item,
                                 checked = item.file.absolutePath in vm.selected,
                                 selecting = vm.selectionActive,
-                                onOpen = {
-                                    if (vm.selectionActive) vm.toggleSelect(item.file.absolutePath)
-                                    else if (item.isDir) vm.openDir(item.file)
-                                    else openFileEntry(item.file)
-                                },
+                                onOpen = { openBrowserItem(item) },
                                 onLongPress = { vm.toggleSelect(item.file.absolutePath) },
                             )
                         }
@@ -867,11 +944,7 @@ private fun FileManagerScaffold(
                                 item = item,
                                 checked = item.file.absolutePath in vm.selected,
                                 selecting = vm.selectionActive,
-                                onOpen = {
-                                    if (vm.selectionActive) vm.toggleSelect(item.file.absolutePath)
-                                    else if (item.isDir) vm.openDir(item.file)
-                                    else openFileEntry(item.file)
-                                },
+                                onOpen = { openBrowserItem(item) },
                                 onLongPress = { vm.toggleSelect(item.file.absolutePath) },
                             )
                         }
@@ -927,6 +1000,20 @@ private fun FileManagerScaffold(
                     }) { Text("Forever", color = MaterialTheme.colorScheme.error) }
                 }
             },
+        )
+    }
+    if (showPermPopup && !hasStoragePermission(context)) {
+        AlertDialog(
+            onDismissRequest = { showPermPopup = false },
+            title = { Text("Storage access") },
+            text = { Text("File Manager needs storage access to show your files and storages. Grant it now to continue.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPermPopup = false
+                    requestStorageAccess()
+                }) { Text("Grant access") }
+            },
+            dismissButton = { TextButton(onClick = { showPermPopup = false }) { Text("Later") } },
         )
     }
     infoTarget?.let { f ->
